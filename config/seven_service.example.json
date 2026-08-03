@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "topology_name": "synthetic-seven-service-lab",
+  "deployment_mode": "managed-full-stack",
+  "load_balancer": {
+    "kind": "OCI_LOAD_BALANCER",
+    "visibility": "private",
+    "listener_protocol": "HTTP",
+    "listener_mode": "per-service-port"
+  },
+  "notification": {
+    "protocol": "EMAIL",
+    "endpoint_env": "SELF_HEALING_SYNTHETIC_OPERATIONS_EMAIL"
+  },
+  "services": [
+    {
+      "id": "atlas",
+      "backend_set_name": "synthetic_atlas_backends",
+      "backend_port": 7100,
+      "health_path": "/healthz",
+      "capacity": {"min": 2, "initial": 3, "max": 5, "cooldown_seconds": 300},
+      "placement": "balanced_fault_domains",
+      "capacity_reservation": "none",
+      "remediation": {"min_healthy": 2, "max_replacements": 2, "window_seconds": 1800}
+    },
+    {
+      "id": "birch",
+      "backend_set_name": "synthetic_birch_backends",
+      "backend_port": 3100,
+      "health_path": "/healthz",
+      "capacity": {"min": 2, "initial": 2, "max": 4, "cooldown_seconds": 420},
+      "placement": "balanced_fault_domains",
+      "capacity_reservation": "none",
+      "remediation": {"min_healthy": 1, "max_replacements": 1, "window_seconds": 1800}
+    },
+    {
+      "id": "cedar",
+      "backend_set_name": "synthetic_cedar_backends",
+      "backend_port": 2100,
+      "health_path": "/healthz",
+      "capacity": {"min": 2, "initial": 3, "max": 6, "cooldown_seconds": 300},
+      "placement": "balanced_fault_domains",
+      "capacity_reservation": "none",
+      "remediation": {"min_healthy": 2, "max_replacements": 2, "window_seconds": 1800}
+    },
+    {
+      "id": "delta",
+      "backend_set_name": "synthetic_delta_backends",
+      "backend_port": 9100,
+      "health_path": "/healthz",
+      "capacity": {"min": 2, "initial": 2, "max": 3, "cooldown_seconds": 600},
+      "placement": "balanced_fault_domains",
+      "capacity_reservation": "none",
+      "remediation": {"min_healthy": 1, "max_replacements": 1, "window_seconds": 1800}
+    },
+    {
+      "id": "ember",
+      "backend_set_name": "synthetic_ember_backends",
+      "backend_port": 7200,
+      "health_path": "/healthz",
+      "capacity": {"min": 2, "initial": 2, "max": 5, "cooldown_seconds": 300},
+      "placement": "balanced_fault_domains",
+      "capacity_reservation": "none",
+      "remediation": {"min_healthy": 1, "max_replacements": 2, "window_seconds": 1800}
+    },
+    {
+      "id": "fjord",
+      "backend_set_name": "synthetic_fjord_backends",
+      "backend_port": 4100,
+      "health_path": "/healthz",
+      "capacity": {"min": 2, "initial": 2, "max": 4, "cooldown_seconds": 480},
+      "placement": "balanced_fault_domains",
+      "capacity_reservation": "none",
+      "remediation": {"min_healthy": 1, "max_replacements": 1, "window_seconds": 1800}
+    },
+    {
+      "id": "grove",
+      "backend_set_name": "synthetic_grove_backends",
+      "backend_port": 6100,
+      "health_path": "/healthz",
+      "capacity": {"min": 2, "initial": 2, "max": 3, "cooldown_seconds": 600},
+      "placement": "balanced_fault_domains",
+      "capacity_reservation": "none",
+      "remediation": {"min_healthy": 1, "max_replacements": 1, "window_seconds": 3600}
+    }
+  ]
+}

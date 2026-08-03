@@ -1,0 +1,56 @@
+#cloud-config
+write_files:
+  - path: /opt/self_healing/server.py
+    permissions: "0755"
+    content: |
+      import json
+      import os
+      import socket
+      from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+      HEALTH_FILE = "/opt/self_healing/healthy"
+
+      class Handler(BaseHTTPRequestHandler):
+          def do_GET(self):
+              healthy = (
+                  os.path.exists(HEALTH_FILE)
+                  and open(HEALTH_FILE, encoding="utf-8").read().strip() == "healthy"
+              )
+              if self.path == "/healthz":
+                  body = {"status": "healthy" if healthy else "unhealthy"}
+                  self.send_response(200 if healthy else 503)
+              else:
+                  body = {"component": "self_healing", "host": socket.gethostname(), "healthy": healthy}
+                  self.send_response(200 if healthy else 503)
+              payload = json.dumps(body).encode()
+              self.send_header("Content-Type", "application/json")
+              self.send_header("Content-Length", str(len(payload)))
+              self.end_headers()
+              self.wfile.write(payload)
+
+          def log_message(self, *_args):
+              return
+
+      ThreadingHTTPServer(("0.0.0.0", ${backend_port}), Handler).serve_forever()
+  - path: /etc/systemd/system/self_healing-web.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=OCI self-healing disposable web backend
+      After=network-online.target
+      Wants=network-online.target
+      [Service]
+      ExecStart=/usr/bin/python3 /opt/self_healing/server.py
+      Restart=always
+      RestartSec=2
+      [Install]
+      WantedBy=multi-user.target
+runcmd:
+  - mkdir -p /opt/self_healing
+  - [bash, -lc, "printf 'healthy\n' > /opt/self_healing/healthy"]
+  - chmod 0666 /opt/self_healing/healthy
+  - systemctl stop firewalld
+  - firewall-offline-cmd --add-port=${backend_port}/tcp
+  - systemctl enable --now firewalld
+  - systemctl daemon-reload
+  - systemctl enable --now self_healing-web.service
