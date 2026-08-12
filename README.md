@@ -4,6 +4,8 @@ This repository provides a tenant-neutral, Terraform-owned implementation for
 automatically replacing an unhealthy OCI Compute Instance Pool member detected
 by an OCI Load Balancer. It contains no tenancy identifiers, addresses, email
 endpoints, credentials, console URLs, or source-environment images.
+This repo is a personal 
+repo and it’s not an official Oracle product. You need to bring changes to the code to meet your needs. This is Demo/PoC intended code andit must used under the user full responsability.
 
 Two deployment modes are intentionally separate:
 
