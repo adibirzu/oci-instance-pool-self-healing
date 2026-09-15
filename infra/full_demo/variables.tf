@@ -58,14 +58,10 @@ variable "enable_function" {
   default = false
 }
 
-variable "function_image" {
-  type    = string
-  default = ""
-}
-
-variable "function_image_digest" {
-  type    = string
-  default = ""
+variable "external_function_ids" {
+  description = "Existing Function OCIDs keyed by service name. Terraform does not create, update, or delete these Functions."
+  type        = map(string)
+  default     = {}
 }
 
 variable "function_mode" {
@@ -85,7 +81,7 @@ variable "operations_email" {
 }
 
 variable "log_retention_days" {
-  description = "Retention for Function and Load Balancer service logs. OCI Logging accepts 30-day increments."
+  description = "Retention for Terraform-managed Load Balancer service logs. OCI Logging accepts 30-day increments."
   type        = number
   default     = 30
   validation {

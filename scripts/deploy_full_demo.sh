@@ -13,7 +13,6 @@ TF_STATE="$STATE_DIR/terraform.tfstate"
 TFVARS="$STATE_DIR/self_healing-seven.auto.tfvars.json"
 BASE_PLAN="$STATE_DIR/self_healing-seven-base.tfplan"
 FULL_PLAN="$STATE_DIR/self_healing-seven-full.tfplan"
-FUNCTION_DIR="$PROJECT_ROOT/functions/health_remediator"
 export TF_DATA_DIR="$STATE_DIR/.terraform"
 
 required=(OCI_TENANCY_ID OCI_REGION OCI_COMPARTMENT_ID)
@@ -82,10 +81,35 @@ values = {
     "instance_memory_gbs": int(os.environ.get("SELF_HEALING_DEMO_INSTANCE_MEMORY_GBS", "2")),
     "operations_email": os.environ.get("SELF_HEALING_DEMO_OPERATIONS_EMAIL", ""),
     "function_mode": os.environ.get("SELF_HEALING_DEMO_FUNCTION_MODE", "observe"),
-    "enable_function": bool(previous.get("enable_function", False)),
-    "function_image": previous.get("function_image", ""),
+    "enable_function": False,
+    "external_function_ids": {},
     "services": services,
 }
+
+external_ids_raw = os.environ.get("SELF_HEALING_DEMO_EXTERNAL_FUNCTION_IDS")
+if external_ids_raw:
+    try:
+        external_ids = json.loads(external_ids_raw)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"SELF_HEALING_DEMO_EXTERNAL_FUNCTION_IDS must be JSON: {error}")
+    if not isinstance(external_ids, dict) or not all(
+        isinstance(name, str) and isinstance(function_id, str) and function_id
+        for name, function_id in external_ids.items()
+    ):
+        raise SystemExit("SELF_HEALING_DEMO_EXTERNAL_FUNCTION_IDS must be a JSON object of service names to Function OCIDs")
+else:
+    external_ids = previous.get("external_function_ids", {})
+
+enabled_raw = os.environ.get("SELF_HEALING_DEMO_ENABLE_FUNCTION")
+if enabled_raw is None:
+    values["enable_function"] = bool(external_ids)
+elif enabled_raw.lower() in ("1", "true", "yes"):
+    values["enable_function"] = True
+elif enabled_raw.lower() in ("0", "false", "no"):
+    values["enable_function"] = False
+else:
+    raise SystemExit("SELF_HEALING_DEMO_ENABLE_FUNCTION must be true or false")
+values["external_function_ids"] = external_ids
 path.write_text(json.dumps(values), encoding="utf-8")
 PY
 chmod 600 "$TFVARS"
@@ -99,51 +123,6 @@ if ! is_truthy "${SELF_HEALING_DEMO_APPLY_APPROVED:-false}"; then
 fi
 terraform -chdir="$TF_ROOT" apply -input=false -auto-approve \
     -state="$TF_STATE" "$BASE_PLAN"
-
-image_ref="${SELF_HEALING_DEMO_FUNCTION_IMAGE:-}"
-if [[ -z "$image_ref" ]]; then
-    image_ref="$(python3 - "$TFVARS" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding="utf-8") as stream:
-    print(json.load(stream).get("function_image", ""))
-PY
-)"
-fi
-if [[ -z "$image_ref" ]]; then
-    repository="$(terraform -chdir="$TF_ROOT" output -state="$TF_STATE" -raw container_repository_path)"
-    registry="${repository%%/*}"
-    namespace="$(oci_cli os ns get --query data --raw-output)"
-    user_name="${SELF_HEALING_OCIR_USER_NAME:-}"
-    auth_token="${SELF_HEALING_OCIR_AUTH_TOKEN:-${OCIR_AUTH_TOKEN:-}}"
-    [[ -n "$user_name" && -n "$auth_token" ]] || {
-        echo "Self-Healing seven-service: OCIR username and auth token are required for the Function image" >&2
-        exit 2
-    }
-    printf '%s' "$auth_token" | docker login "$registry" \
-        --username "${namespace}/${user_name}" --password-stdin >/dev/null
-    image_ref="${repository}:$(date -u +%Y%m%d%H%M%S)"
-    docker buildx build --platform linux/amd64 --push \
-        --tag "$image_ref" "$FUNCTION_DIR"
-fi
-
-python3 - "$TFVARS" "$image_ref" <<'PY'
-import json
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-values = json.loads(path.read_text(encoding="utf-8"))
-values["enable_function"] = True
-values["function_image"] = sys.argv[2]
-path.write_text(json.dumps(values), encoding="utf-8")
-PY
-chmod 600 "$TFVARS"
-terraform -chdir="$TF_ROOT" plan -input=false -state="$TF_STATE" \
-    -var-file="$TFVARS" -out="$FULL_PLAN"
-if ! is_truthy "${SELF_HEALING_DEMO_FUNCTION_APPLY_APPROVED:-false}"; then
-    echo "Self-Healing seven-service: Function plan saved; set SELF_HEALING_DEMO_FUNCTION_APPLY_APPROVED=true to apply"
-    exit 0
-fi
-terraform -chdir="$TF_ROOT" apply -input=false -auto-approve \
-    -state="$TF_STATE" "$FULL_PLAN"
-echo "Self-Healing seven-service: complete Terraform-owned test stack applied"
+echo "Self-Healing seven-service: external Function configuration:"
+terraform -chdir="$TF_ROOT" output -state="$TF_STATE" -json function_config_yaml
+echo "Self-Healing seven-service: base stack applied"

@@ -287,23 +287,20 @@ def test_managed_full_stack_declares_every_required_oci_resource():
         "oci_core_instance_configuration",
         "oci_core_instance_pool",
         "oci_autoscaling_auto_scaling_configuration",
-        "oci_artifacts_container_repository",
-        "oci_functions_application",
-        "oci_functions_function",
         "oci_nosql_table",
         "oci_ons_notification_topic",
         "oci_ons_subscription",
         "oci_monitoring_alarm",
         "oci_logging_log_group",
         "oci_logging_log",
-        "oci_identity_dynamic_group",
-        "oci_identity_policy",
     ):
         assert f'resource "{resource}"' in main
     assert "is_private                 = true" in main
     assert "for_each" in main
     assert 'variable "services"' in variables
+    assert 'variable "external_function_ids"' in variables
     assert 'output "instance_pool_ids"' in outputs
+    assert 'output "function_config_yaml"' in outputs
 
 
 def test_full_stack_persists_function_and_load_balancer_audit_logs():

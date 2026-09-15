@@ -11,18 +11,11 @@ data "oci_core_images" "oracle_linux" {
   sort_order               = "DESC"
 }
 
-data "oci_objectstorage_namespace" "this" {
-  compartment_id = var.tenancy_ocid
-}
-
 locals {
   backend_ports = toset([for service in values(var.services) : tostring(service.backend_port)])
   state_names = {
     for name, _service in var.services : name => "${replace(var.name_prefix, "-", "_")}_${name}_state"
   }
-  function_matching_rule = var.enable_function ? "ANY {${join(", ", [
-    for function in values(oci_functions_function.remediator) : "resource.id = '${function.id}'"
-  ])}}" : "ALL {resource.type = 'fnfunc', resource.compartment.id = '${var.compartment_id}'}"
 }
 
 resource "oci_core_vcn" "this" {
@@ -333,23 +326,6 @@ resource "oci_autoscaling_auto_scaling_configuration" "service" {
   }
 }
 
-resource "oci_artifacts_container_repository" "function" {
-  compartment_id = var.compartment_id
-  display_name   = "${var.name_prefix}/health-remediator"
-  is_immutable   = false
-  is_public      = false
-  freeform_tags  = var.freeform_tags
-}
-
-resource "oci_functions_application" "this" {
-  compartment_id             = var.compartment_id
-  display_name               = "${var.name_prefix}-functions"
-  subnet_ids                 = [oci_core_subnet.function.id]
-  network_security_group_ids = [oci_core_network_security_group.function.id]
-  shape                      = "GENERIC_X86"
-  freeform_tags              = var.freeform_tags
-}
-
 resource "oci_nosql_table" "state" {
   for_each       = var.services
   compartment_id = var.compartment_id
@@ -357,9 +333,11 @@ resource "oci_nosql_table" "state" {
   ddl_statement  = "CREATE TABLE ${local.state_names[each.key]} (event_key STRING, created_epoch LONG, pool_id STRING, backend_name STRING, action STRING, detail STRING, PRIMARY KEY(SHARD(event_key)))"
   freeform_tags  = merge(var.freeform_tags, { service = each.key })
   table_limits {
-    capacity_mode      = "ON_DEMAND"
-    max_read_units     = 0
-    max_write_units    = 0
+    # Seven on-demand tables request 10,000 read units each in this tenancy.
+    # Provisioned capacity keeps their aggregate request within the 100-unit limit.
+    capacity_mode      = "PROVISIONED"
+    max_read_units     = 10
+    max_write_units    = 10
     max_storage_in_gbs = 1
   }
 }
@@ -372,67 +350,16 @@ resource "oci_ons_notification_topic" "service" {
   freeform_tags  = merge(var.freeform_tags, { service = each.key })
 }
 
-resource "oci_functions_function" "remediator" {
-  for_each           = var.enable_function ? var.services : {}
-  application_id     = oci_functions_application.this.id
-  display_name       = "${var.name_prefix}-${each.key}-health-remediator"
-  image              = var.function_image
-  image_digest       = var.function_image_digest != "" ? var.function_image_digest : null
-  memory_in_mbs      = 512
-  timeout_in_seconds = 120
-  freeform_tags      = merge(var.freeform_tags, { service = each.key })
-  config = {
-    MODE                        = var.function_mode
-    SERVICE_NAME                = each.key
-    COMPARTMENT_ID              = var.compartment_id
-    LOAD_BALANCER_ID            = oci_load_balancer_load_balancer.this.id
-    BACKEND_SET_NAME            = each.value.backend_set_name
-    INSTANCE_POOL_ID            = oci_core_instance_pool.service[each.key].id
-    STATE_TABLE_ID              = oci_nosql_table.state[each.key].id
-    STATE_TABLE_NAME            = oci_nosql_table.state[each.key].name
-    STATUS_TOPIC_ID             = oci_ons_notification_topic.service[each.key].id
-    MIN_HEALTHY_BACKENDS        = tostring(each.value.min_healthy)
-    MAX_REPLACEMENTS_PER_WINDOW = tostring(each.value.max_replacements)
-    REPLACEMENT_WINDOW_SECONDS  = tostring(each.value.replacement_window_secs)
-  }
-}
-
-resource "oci_identity_dynamic_group" "function" {
-  count          = var.enable_function ? 1 : 0
-  compartment_id = var.tenancy_ocid
-  name           = "${replace(var.name_prefix, "-", "_")}_function_dg"
-  description    = "Exact synthetic health remediation Functions"
-  matching_rule  = local.function_matching_rule
-}
-
-resource "oci_identity_policy" "function" {
-  count          = var.enable_function ? 1 : 0
-  compartment_id = var.compartment_id
-  name           = "${replace(var.name_prefix, "-", "_")}_function_policy"
-  description    = "Synthetic self-healing Function permissions"
-  statements = [
-    "Allow dynamic-group ${oci_identity_dynamic_group.function[0].name} to read load-balancers in compartment id ${var.compartment_id}",
-    "Allow dynamic-group ${oci_identity_dynamic_group.function[0].name} to manage instance-pools in compartment id ${var.compartment_id}",
-    "Allow dynamic-group ${oci_identity_dynamic_group.function[0].name} to manage instances in compartment id ${var.compartment_id}",
-    "Allow dynamic-group ${oci_identity_dynamic_group.function[0].name} to use vnics in compartment id ${var.compartment_id}",
-    "Allow dynamic-group ${oci_identity_dynamic_group.function[0].name} to use subnets in compartment id ${var.compartment_id}",
-    "Allow dynamic-group ${oci_identity_dynamic_group.function[0].name} to read nosql-tables in compartment id ${var.compartment_id}",
-    "Allow dynamic-group ${oci_identity_dynamic_group.function[0].name} to use nosql-rows in compartment id ${var.compartment_id}",
-    "Allow dynamic-group ${oci_identity_dynamic_group.function[0].name} to use ons-topics in compartment id ${var.compartment_id}",
-  ]
-}
-
 resource "oci_ons_subscription" "function" {
-  for_each       = var.enable_function ? var.services : {}
+  for_each       = var.enable_function ? var.external_function_ids : {}
   compartment_id = var.compartment_id
   topic_id       = oci_ons_notification_topic.service[each.key].id
   protocol       = "ORACLE_FUNCTIONS"
-  endpoint       = oci_functions_function.remediator[each.key].id
-  depends_on     = [oci_identity_policy.function]
+  endpoint       = each.value
 }
 
 resource "oci_ons_subscription" "email" {
-  for_each       = var.operations_email != "" ? var.services : {}
+  for_each       = nonsensitive(var.operations_email) != "" ? var.services : {}
   compartment_id = var.compartment_id
   topic_id       = oci_ons_notification_topic.service[each.key].id
   protocol       = "EMAIL"
@@ -440,12 +367,12 @@ resource "oci_ons_subscription" "email" {
 }
 
 resource "oci_monitoring_alarm" "unhealthy_backend" {
-  for_each              = var.enable_function ? var.services : {}
+  for_each              = var.enable_function ? var.external_function_ids : {}
   compartment_id        = var.compartment_id
   metric_compartment_id = var.compartment_id
   display_name          = "${var.name_prefix}-${each.key}-unhealthy-backend"
   namespace             = "oci_lbaas"
-  query                 = "unhealthyBackendServers[1m]{resourceId = \"${oci_load_balancer_load_balancer.this.id}\", backendSetName = \"${each.value.backend_set_name}\"}.max() > 0"
+  query                 = "unhealthyBackendServers[1m]{resourceId = \"${oci_load_balancer_load_balancer.this.id}\", backendSetName = \"${var.services[each.key].backend_set_name}\"}.max() > 0"
   severity              = "CRITICAL"
   destinations          = [oci_ons_notification_topic.service[each.key].id]
   is_enabled            = true
@@ -460,24 +387,6 @@ resource "oci_logging_log_group" "this" {
   display_name   = "${var.name_prefix}-logs"
   description    = "Synthetic self-healing Function and Load Balancer logs"
   freeform_tags  = var.freeform_tags
-}
-
-resource "oci_logging_log" "function" {
-  count              = var.enable_function ? 1 : 0
-  display_name       = "${var.name_prefix}-function-invocations"
-  log_group_id       = oci_logging_log_group.this.id
-  log_type           = "SERVICE"
-  is_enabled         = true
-  retention_duration = var.log_retention_days
-  configuration {
-    compartment_id = var.compartment_id
-    source {
-      category    = "invoke"
-      resource    = oci_functions_application.this.id
-      service     = "functions"
-      source_type = "OCISERVICE"
-    }
-  }
 }
 
 resource "oci_logging_log" "load_balancer_access" {
