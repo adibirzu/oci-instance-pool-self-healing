@@ -22,12 +22,29 @@ output "service_ports" {
 }
 
 output "function_ids" {
-  value     = { for name, function in oci_functions_function.remediator : name => function.id }
+  value     = var.external_function_ids
   sensitive = true
 }
 
-output "container_repository_path" {
-  value = "${var.region}.ocir.io/${data.oci_objectstorage_namespace.this.namespace}/${oci_artifacts_container_repository.function.display_name}"
+output "function_config_yaml" {
+  description = "Copy one service block into an externally deployed Function's func.yaml after the base stack apply."
+  sensitive   = true
+  value = {
+    for name, service in var.services : name => <<-EOT
+      config:
+        MODE: "${var.function_mode}"
+        SERVICE_NAME: "${name}"
+        COMPARTMENT_ID: "${var.compartment_id}"
+        LOAD_BALANCER_ID: "${oci_load_balancer_load_balancer.this.id}"
+        BACKEND_SET_NAME: "${service.backend_set_name}"
+        INSTANCE_POOL_ID: "${oci_core_instance_pool.service[name].id}"
+        STATE_TABLE_ID: "${oci_nosql_table.state[name].id}"
+        STATE_TABLE_NAME: "${oci_nosql_table.state[name].name}"
+        MIN_HEALTHY_BACKENDS: "${service.min_healthy}"
+        MAX_REPLACEMENTS_PER_WINDOW: "${service.max_replacements}"
+        REPLACEMENT_WINDOW_SECONDS: "${service.replacement_window_secs}"
+    EOT
+  }
 }
 
 output "log_group_id" {
